@@ -63,58 +63,71 @@ async def parse_news():
     global scheduled_news
     scheduled_news.clear()
 
-   url = "https://www.forexfactory.com/calendar"
-headers = {'User-Agent': 'Mozilla/5.0'}
+    url = "https://www.forexfactory.com/calendar"
+    headers = {'User-Agent': 'Mozilla/5.0'}
 
-response = requests.get(url, headers=headers)
-soup = BeautifulSoup(response.text, "html.parser")
-
-rows = soup.select("tr.calendar__row")
-
-today = datetime.datetime.utcnow().date()
-
-for row in rows:
-    time_cell = row.select_one("td.calendar__cell.calendar__time")
-    impact_span = row.select_one("td.calendar__cell.calendar__impact span.impact")
-    currency_cell = row.select_one("td.calendar__cell.calendar__currency")
-    event_cell = row.select_one("td.calendar__cell.calendar__event")
-
-    if not all([time_cell, impact_span, currency_cell, event_cell]):
-        continue
-
-    time_str = time_cell.text.strip()
-    impact_classes = impact_span.get("class", [])
-    currency = currency_cell.text.strip()
-    event = event_cell.text.strip()
-
-    # Фільтрація валют
-    if currency not in ["EUR", "USD", "GBP"]:
-        continue
-
-    # Пропускаємо новини без часу
-    if time_str.lower() in ["all day", "tentative", ""]:
-        continue
-
-    # Визначення емодзі
-    if "impact--red" in impact_classes:
-        impact_emoji = "🟥"
-    elif "impact--orange" in impact_classes:
-        impact_emoji = "🟧"
-    else:
-        continue
-
-    # Розбір часу
     try:
-        hour, minute = map(int, time_str.split(":"))
-    except ValueError:
-        continue
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Помилка отримання сторінки: {e}")
+        return
 
-    news_time_utc = datetime.datetime.combine(today, datetime.time(hour, minute))
-    news_time = news_time_utc + datetime.timedelta(hours=2)  # Київський час UTC+2
-    remind_time = news_time - datetime.timedelta(minutes=15)
+    soup = BeautifulSoup(response.text, "html.parser")
+    rows = soup.select("tr.calendar__row")
 
-    print(f"{impact_emoji} {currency} — {event} о {news_time.strftime('%H:%M')} (нагадаю о {remind_time.strftime('%H:%M')})")
-            
+    today = datetime.datetime.now(KYIV_TZ).date()
+
+    for row in rows:
+        time_cell = row.select_one("td.calendar__cell.calendar__time")
+        impact_span = row.select_one("td.calendar__cell.calendar__impact span.impact")
+        currency_cell = row.select_one("td.calendar__cell.calendar__currency")
+        event_cell = row.select_one("td.calendar__cell.calendar__event")
+
+        if not all([time_cell, impact_span, currency_cell, event_cell]):
+            continue
+
+        time_str = time_cell.text.strip()
+        impact_classes = impact_span.get("class", [])
+        currency = currency_cell.text.strip()
+        event = event_cell.text.strip()
+
+        # Фільтрація валют
+        if currency not in ["EUR", "USD", "GBP"]:
+            continue
+
+        # Пропускаємо новини без часу
+        if time_str.lower() in ["all day", "tentative", ""]:
+            continue
+
+        # Визначення емодзі
+        if "impact--red" in impact_classes:
+            impact_emoji = "🟥"
+        elif "impact--orange" in impact_classes:
+            impact_emoji = "🟧"
+        else:
+            continue
+
+        try:
+            hour, minute = map(int, time_str.split(":"))
+        except ValueError:
+            continue
+
+        # Створюємо datetime у київському часі
+        news_time = KYIV_TZ.localize(datetime.datetime.combine(today, datetime.time(hour, minute)))
+        remind_time = (news_time - datetime.timedelta(minutes=15)).strftime('%H:%M')
+
+        # Формуємо текст новини
+        text = f"{impact_emoji} {currency} — {event} о {news_time.strftime('%H:%M')}"
+
+        scheduled_news.append({
+            "remind_time": remind_time,
+            "news_time": news_time.strftime('%H:%M'),
+            "text": text
+        })
+
+    print(f"Знайдено новин: {len(scheduled_news)}")
+
 
 @tasks.loop(seconds=60)
 async def send_news_reminders():
@@ -151,7 +164,6 @@ async def noon_news():
                 await channel.send(text)
 
 
-# Команда для тесту новин
 @bot.command(name="testnews")
 async def test_news(ctx):
     await parse_news()
