@@ -2,15 +2,18 @@ import discord
 from discord.ext import commands, tasks
 import datetime
 import asyncio
-
 import os
-TOKEN = os.getenv("TOKEN")  # Встав свій токен
-CHANNEL_IDS = [1307089130341142558, 1307089152898236486, 1307089168282685552, 1372662168167907468]  # Встав сюди ID каналів
+import requests
+from bs4 import BeautifulSoup
+
+TOKEN = os.getenv("TOKEN")  # Токен з Environment Variables
+CHANNEL_IDS = [1307089130341142558, 1307089152898236486, 1307089168282685552, 1372662168167907468]
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+scheduled_news = []  # Список новин
 
 @bot.event
 async def on_ready():
@@ -19,7 +22,12 @@ async def on_ready():
         channel = bot.get_channel(channel_id)
         if channel:
             await channel.send("Hello! 👋🏻")
+
     scheduled_messages.start()
+    fetch_news.start()
+    send_news_reminders.start()
+    morning_news.start()
+    noon_news.start()
 
 
 @tasks.loop(seconds=60)
@@ -63,7 +71,11 @@ async def fetch_news():
             if time_str.lower() in ["all day", "tentative", ""]:
                 continue
 
-            impact_classes = row.select_one(".impact span")["class"]
+            impact_span = row.select_one(".impact span")
+            if not impact_span:
+                continue
+
+            impact_classes = impact_span["class"]
             if "orange" in impact_classes:
                 impact_emoji = "🟧"
             elif "red" in impact_classes:
@@ -78,9 +90,7 @@ async def fetch_news():
             event = row.select_one(".calendar__event-title").text.strip()
             hour, minute = map(int, time_str.split(":"))
             news_time_utc = datetime.datetime.combine(today, datetime.time(hour, minute))
-
-            # конвертація до твоєї локальної зони (UTC+2)
-            news_time = news_time_utc + datetime.timedelta(hours=2)
+            news_time = news_time_utc + datetime.timedelta(hours=2)  # Локальний час (UTC+2)
             remind_time = news_time - datetime.timedelta(minutes=15)
 
             scheduled_news.append({
@@ -88,14 +98,14 @@ async def fetch_news():
                 "news_time": news_time.strftime('%H:%M'),
                 "text": f"{impact_emoji} {currency} — {event} о {news_time.strftime('%H:%M')}!"
             })
-        except Exception as e:
+
+        except Exception:
             continue
 
 
 @tasks.loop(seconds=60)
 async def send_news_reminders():
     now = datetime.datetime.now().strftime('%H:%M')
-
     for news in scheduled_news:
         if news["remind_time"] == now:
             for channel_id in CHANNEL_IDS:
