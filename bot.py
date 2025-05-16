@@ -63,54 +63,58 @@ async def parse_news():
     global scheduled_news
     scheduled_news.clear()
 
-    url = "https://www.forexfactory.com/calendar"
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, "html.parser")
-    rows = soup.select("tr.calendar__row")
+   url = "https://www.forexfactory.com/calendar"
+headers = {'User-Agent': 'Mozilla/5.0'}
 
-    today = datetime.datetime.now(KYIV_TZ).date()
+response = requests.get(url, headers=headers)
+soup = BeautifulSoup(response.text, "html.parser")
 
-    for row in rows:
-        try:
-            time_str = row.select_one(".calendar__time").text.strip()
-            if time_str.lower() in ["all day", "tentative", ""]:
-                continue
+rows = soup.select("tr.calendar__row")
 
-            impact_span = row.select_one(".impact span")
-            if not impact_span:
-                continue
+today = datetime.datetime.utcnow().date()
 
-            impact_classes = impact_span["class"]
-            if "orange" in impact_classes:
-                impact_emoji = "🟧"
-            elif "red" in impact_classes:
-                impact_emoji = "🟥"
-            else:
-                continue
+for row in rows:
+    time_cell = row.select_one("td.calendar__cell.calendar__time")
+    impact_span = row.select_one("td.calendar__cell.calendar__impact span.impact")
+    currency_cell = row.select_one("td.calendar__cell.calendar__currency")
+    event_cell = row.select_one("td.calendar__cell.calendar__event")
 
-            currency = row.select_one(".calendar__currency").text.strip()
-            if currency not in ["EUR", "USD", "GBP"]:
-                continue
+    if not all([time_cell, impact_span, currency_cell, event_cell]):
+        continue
 
-            event = row.select_one(".calendar__event-title").text.strip()
+    time_str = time_cell.text.strip()
+    impact_classes = impact_span.get("class", [])
+    currency = currency_cell.text.strip()
+    event = event_cell.text.strip()
 
-            hour, minute = map(int, time_str.split(":"))
-            # Парсимо час як UTC (ForexFactory час в UTC)
-            news_time_utc = datetime.datetime.combine(today, datetime.time(hour, minute, tzinfo=pytz.utc))
-            # Конвертуємо у Київський час
-            news_time_kyiv = news_time_utc.astimezone(KYIV_TZ)
+    # Фільтрація валют
+    if currency not in ["EUR", "USD", "GBP"]:
+        continue
 
-            remind_time = news_time_kyiv - datetime.timedelta(minutes=15)
+    # Пропускаємо новини без часу
+    if time_str.lower() in ["all day", "tentative", ""]:
+        continue
 
-            scheduled_news.append({
-                "remind_time": remind_time.strftime('%H:%M'),
-                "news_time": news_time_kyiv.strftime('%H:%M'),
-                "text": f"{impact_emoji} {currency} — {event} о {news_time_kyiv.strftime('%H:%M')}!"
-            })
-        except Exception:
-            continue
+    # Визначення емодзі
+    if "impact--red" in impact_classes:
+        impact_emoji = "🟥"
+    elif "impact--orange" in impact_classes:
+        impact_emoji = "🟧"
+    else:
+        continue
 
+    # Розбір часу
+    try:
+        hour, minute = map(int, time_str.split(":"))
+    except ValueError:
+        continue
+
+    news_time_utc = datetime.datetime.combine(today, datetime.time(hour, minute))
+    news_time = news_time_utc + datetime.timedelta(hours=2)  # Київський час UTC+2
+    remind_time = news_time - datetime.timedelta(minutes=15)
+
+    print(f"{impact_emoji} {currency} — {event} о {news_time.strftime('%H:%M')} (нагадаю о {remind_time.strftime('%H:%M')})")
+            
 
 @tasks.loop(seconds=60)
 async def send_news_reminders():
