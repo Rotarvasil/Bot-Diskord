@@ -22,8 +22,7 @@ async def on_ready():
     print(f'✅ Бот запущено як {bot.user}')
     for channel_id in CHANNEL_IDS:
         channel = bot.get_channel(channel_id)
-        if channel:
-            await channel.send("Hello! 👋🏻")
+        
 
     scheduled_messages.start()
     fetch_news.start()
