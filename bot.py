@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands, tasks
 import datetime
-import asyncio
 import os
 import requests
 from bs4 import BeautifulSoup
@@ -97,7 +96,9 @@ async def parse_news():
             event = row.select_one(".calendar__event-title").text.strip()
 
             hour, minute = map(int, time_str.split(":"))
+            # Парсимо час як UTC (ForexFactory час в UTC)
             news_time_utc = datetime.datetime.combine(today, datetime.time(hour, minute, tzinfo=pytz.utc))
+            # Конвертуємо у Київський час
             news_time_kyiv = news_time_utc.astimezone(KYIV_TZ)
 
             remind_time = news_time_kyiv - datetime.timedelta(minutes=15)
@@ -146,7 +147,7 @@ async def noon_news():
                 await channel.send(text)
 
 
-# Команда для ручного тестування новин
+# Команда для тесту новин
 @bot.command(name="testnews")
 async def test_news(ctx):
     await parse_news()
